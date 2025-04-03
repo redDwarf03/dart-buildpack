@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# bin/release <build-dir>
+
+build_dir=$1
+
+# Always use dart run to start the Dart application
+cat << EOF
+addons: []
+default_process_types:
+  web: dart run bin/server.dart
+EOF

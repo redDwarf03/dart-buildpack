@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# bin/detect <build-dir>
+
+# Enable tracing if the environment variable BUILDPACK_XTRACE is set
+[ "$BUILDPACK_XTRACE" ] && set -o xtrace
+
+# Function to handle errors and output them in a formatted way
+error() {
+  local c="2,999 s/^/ !     /"
+  # send all of our output to stderr
+  exec 1>&2
+
+  echo -e "\033[1;31m" # bold; red
+  echo -n " !     ERROR: "
+  # Format output with sed based on system type (mac/bsd or unix/gnu)
+  case $(uname) in
+    Darwin) sed -l "$c";; # mac/bsd sed: -l buffers on line boundaries
+    *)      sed -u "$c";; # unix/gnu sed: -u unbuffered (arbitrary) chunks of data
+  esac
+  echo -e "\033[0m" # reset style
+  exit 1
+}
+
+# Check if pubspec.yaml exists in the project directory (indicates Dart project)
+if [ -f "$1/pubspec.yaml" ]; then
+  echo 'Dart'  # It's a Dart project
+  exit 0  # Success
+fi
+
+# Check if the project contains a Flutter project (indicated by the presence of the .flutter directory)
+if [ -d "$1/.flutter" ]; then
+  echo 'Flutter'  # It's a Flutter project
+  exit 0  # Success
+fi
+
+# If pubspec.yaml is listed in .slugignore, show an error message
+if [[ -f "$1/.slugignore" ]] && grep -Fxq "pubspec.yaml" "$1/.slugignore"; then
+  error << EOF
+'pubspec.yaml' listed in '.slugignore' file
+
+The Dart buildpack is set on this application, but was
+unable to detect a 'pubspec.yaml' file. This is likely because
+the '.slugignore' file is removing it before the build begins.
+
+For more information, refer to the following documentation:
+https://doc.scalingo.com/platform/app/slugignore
+EOF
+# If pubspec.yaml is listed in .gitignore, show an error message
+elif [[ -f "$1/.gitignore" ]] && grep -Fxq "pubspec.yaml" "$1/.gitignore"; then
+  error << EOF
+'pubspec.yaml' listed in '.gitignore' file
+
+The Dart buildpack is set on this application, but was
+unable to detect a 'pubspec.yaml' file. This is likely because
+the '.gitignore' file is preventing it from being checked in to
+the git repo.
+EOF
+else
+  # If no Dart or Flutter project is detected, show a general error message
+  error <<- EOF
+Application not supported by Dart buildpack
+
+The Dart buildpack is set on this application, but was
+unable to detect a Dart codebase.
+
+A Dart app on Scalingo requires a 'pubspec.yaml' at the root of
+the directory structure.
+
+If you are trying to deploy a Dart application, ensure that this
+file is present at the top level directory. This directory has the
+following files:
+
+$(ls -1p "$1")
+
+If you are trying to deploy an application written in another
+language, you need to change the list of buildpacks used to deploy
+this application.
+
+For more information, refer to the following documentation:
+https://doc.scalingo.com/platform/deployment/buildpacks/multi
+https://github.com/redDwarf03/dart-buildpack
+EOF
+fi
+
+exit 1  # Exit with an error if no valid Dart/Flutter project is detected
