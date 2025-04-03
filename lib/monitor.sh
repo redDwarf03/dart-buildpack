@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# Function to monitor memory usage of a process
 monitor_memory_usage() {
   local output_file="$1"
 
@@ -12,16 +13,16 @@ monitor_memory_usage() {
   # save the PID of the running command
   pid=$!
 
-  # if this build process is SIGTERM'd
+  # if this process is SIGTERM'd, kill the background process
   trap 'kill -TERM $pid' TERM
 
-  # set the peak memory usage to 0 to start
+  # Initialize peak memory usage to 0
   peak="0"
 
   while true; do
     sleep .1
 
-    # check the memory usage
+    # Check memory usage of the process
     sample="$(ps -o rss= $pid 2> /dev/null)" || break
 
     if [[ $sample -gt $peak ]]; then
@@ -29,35 +30,39 @@ monitor_memory_usage() {
     fi
   done
 
-  # ps gives us kb, let's convert to mb for convenience
+  # Convert from KB to MB for easier reading
   echo "$((peak / 1024))" > "$output_file"
 
-  # After wait returns we can get the exit code of $command
+  # Wait for the background process to finish and capture the exit code
   wait $pid
 
-  # wait a second time in case the trap was executed
-  # http://veithen.github.io/2014/11/16/sigterm-propagation.html
+  # Wait again in case a TERM signal was sent to ensure proper termination
+  # Reference: http://veithen.github.io/2014/11/16/sigterm-propagation.html
   wait $pid
 
-  # return the exit code of $command
+  # Return the exit code of the command
   return $?
 }
 
+# Function to execute a command and monitor memory usage and execution time
 monitor() {
   local peak_mem_output start
   local command_name=$1
   shift
   local command=( "$@" )
 
+  # Create a temporary file to store peak memory usage
   peak_mem_output=$(mktemp)
   start=$(nowms)
 
-  # execute the subcommand and save the peak memory usage
+  # Execute the subcommand while monitoring its memory usage
   monitor_memory_usage "$peak_mem_output" "${command[@]}"
 
-  mtime "exec.$command_name.time" "${start}"
+  # Log the execution time and memory usage
+  mtime "exec.$command_name.time" "$start"
   mmeasure "exec.$command_name.memory" "$(cat "$peak_mem_output")"
 
+  # Store the execution time and memory usage in metadata
   meta_time "$command_name-time" "$start"
   meta_set "$command_name-memory" "$(cat "$peak_mem_output")"
 }

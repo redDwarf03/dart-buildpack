@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# bin/test-compile-dart <build-dir> <cache-dir> <env-dir>
+
+### Configure environment
+set -o errexit    # always exit on error
+set -o pipefail   # don't ignore exit codes when piping output
+set -o nounset    # catch unset variables
+
+### Configure directories - FIXED PARENTHESIS HERE
+BP_DIR=$(cd "$(dirname "${0:-}")" || exit; cd ..; pwd)
+
+### Load dependencies
+# shellcheck source=lib/environment.sh
+source "$BP_DIR/lib/environment.sh"
+
+### Set up test Dart environment
+export DART_ENV=${DART_ENV:-test}
+
+### Configure Dart SDK and Pub Cache - USING LOCAL PATHS
+export PUB_CACHE="${2:-./cache}/pub-cache"
+mkdir -p "$PUB_CACHE"
+
+# Use either:
+# 1. Dart SDK from buildpack vendor dir
+DART_SDK_PATH="$BP_DIR/vendor/dart-sdk/bin"
+# OR 2. From asdf if you use version manager
+# DART_SDK_PATH="$HOME/.asdf/shims"
+
+export PATH="$PATH:$DART_SDK_PATH:${PUB_CACHE}/bin"
+
+### Verify paths
+echo "Using Dart SDK at: $DART_SDK_PATH" >&2
+echo "Pub cache at: $PUB_CACHE" >&2
+
+### Compile the app
+exec "$BP_DIR/bin/compile" "$@"

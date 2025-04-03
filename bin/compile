@@ -2,19 +2,22 @@
 # bin/compile <build-dir> <cache-dir> <env-dir>
 
 ### Configure environment
-set -o errexit    # exit on error
-set -o pipefail   # do not ignore exit codes in pipes
+set -o errexit
+set -o pipefail
+set -o nounset
 
-if [ -n "$BUILDPACK_DEBUG" ]; then
+if [ -n "${BUILDPACK_DEBUG:-}" ]; then
     set -x
 fi
 
-unset GIT_DIR     # Prevent leaks from previous git steps
+unset GIT_DIR
 
-[ "$BUILDPACK_XTRACE" ] && set -o xtrace
+[ "${BUILDPACK_XTRACE:-}" ] && set -o xtrace
 
 ### Constants
 BPLOG_PREFIX="buildpack.dart"
+DART_MIN_VERSION="2.12.0"
+MAX_CACHE_SIZE_MB=500
 
 ### Configure directories
 BUILD_DIR=${1:-}
@@ -27,134 +30,174 @@ source "$BP_DIR/lib/vendor/stdlib_v7.sh"
 source "$BP_DIR/lib/output.sh"
 source "$BP_DIR/lib/monitor.sh"
 source "$BP_DIR/lib/environment.sh"
+source "$BP_DIR/lib/features.sh"
 source "$BP_DIR/lib/dart.sh"
 source "$BP_DIR/lib/failure.sh"
 source "$BP_DIR/lib/cache.sh"
+source "$BP_DIR/lib/builddata.sh"
 source "$BP_DIR/lib/dependencies.sh"
 source "$BP_DIR/lib/uuid.sh"
 source "$BP_DIR/lib/kvstore.sh"
 source "$BP_DIR/lib/metadata.sh"
 
-### Handle errors
+### Enhanced error handling
 handle_failure() {
   meta_set "dart-build-success" "false"
-  header "Build failed"
-  fail_using_dart_pub "$LOG_FILE"
-  fail_invalid_pubspec "$LOG_FILE"
-  log_other_failures "$LOG_FILE"
-  log_meta_data >> "$BUILDPACK_LOG_FILE"
+  
+  header "Build failure analysis" | output "$LOG_FILE"
+  log_other_failures "$LOG_FILE"  
+  
+  # Extended Diagnostic
+  echo "=== Environment ===" | output "$LOG_FILE"
+  env | sort | output "$LOG_FILE"
+  
   failure_message | output "$LOG_FILE"
+  log_meta_data >> "$BUILDPACK_LOG_FILE"
+  
+  exit 1 
 }
+
 trap 'handle_failure' ERR
 
-### Initialize metadata store
+### Initialize metadata and build environment
 meta_init "$CACHE_DIR"
 meta_setup
 meta_set "build-step" "init"
 
 ### Check initial state
-
 [ -e "$BUILD_DIR/.dart_tool" ] && PREBUILD=true || PREBUILD=false
 [ -f "$BUILD_DIR/pubspec.yaml" ] && PUBSPEC=true || PUBSPEC=false
 
-### Save build info
-features_init "dart" "$BUILD_DIR" "$CACHE_DIR" "$BP_DIR/features"
-log_initial_state
+### Security check
+
+
+fail_dot_scalingo "$BUILD_DIR"
+fail_dot_scalingo_node "$BUILD_DIR"
+fail_invalid_pubspec
+warn_missing_pubspec
+
+
+### Project analysis
+log_project_info "$BUILD_DIR"
 generate_uuids
 
-### Failures that should be caught immediately
-fail_dot_scalingo "$BUILD_DIR"
-fail_invalid_pubspec "$BUILD_DIR"
-warn_missing_pubspec "$BUILD_DIR"
-
-### Gather more project information
-log_project_info "$BUILD_DIR"
-
-### Compile
+### Environment setup
 create_env() {
   export_env_dir "$ENV_DIR"
+  
+  # Clean sensitive variables
+  unset $(env | grep -i 'SECRET\|KEY\|PASSWORD\|TOKEN' | cut -d= -f1)
+  
   create_default_env
-  write_profile "$BP_DIR" "$BUILD_DIR"
+  write_profile "$BP_DIR"
   write_export "$BP_DIR" "$BUILD_DIR"
+  
+  # Set production mode by default
+  export DART_ENV=${DART_ENV:-production}
 }
 
-header "Creating runtime environment" | output "$LOG_FILE"
-
+header "Configuring environment" | output "$LOG_FILE"
 mkdir -p "$BUILD_DIR/.scalingo/dart/"
-cd $BUILD_DIR
+cd "$BUILD_DIR"
 create_env
 list_dart_config | output "$LOG_FILE"
-create_build_env
 
-### Configure Dart SDK
-header "Configuring Dart SDK" | output "$LOG_FILE"
+### Dart SDK Configuration
+header "Verifying Dart SDK" | output "$LOG_FILE"
 
-# Checking Dart version using the function from dart.sh
 dart_version=$(get_dart_version)
-echo "Dart version: $dart_version" | output "$LOG_FILE"
+if ! check_version "$dart_version" "$DART_MIN_VERSION"; then
+  error "Dart $DART_MIN_VERSION or higher required (found $dart_version)"
+  exit 1
+fi
 
 meta_set "dart-version" "$dart_version"
+echo "Using Dart $dart_version" | output "$LOG_FILE"
 
-### Handle dependencies
-restore_cache() {
-  local cache_status restore_cache_start_time
-  restore_cache_start_time=$(nowms)
-
-  cache_status="$(get_cache_status "$CACHE_DIR")"
-  cache_directories="$(get_cache_directories "$BUILD_DIR")"
-
-  if [[ "$cache_status" == "valid" ]]; then
-    header "Restoring cache"
-    restore_default_cache_directories "$BUILD_DIR" "$CACHE_DIR"
-  else
-    echo "Cache invalidated due to change in Dart, pubspec.yaml, or environment"
+### Cache Management
+purge_large_cache() {
+  if [ -d "$CACHE_DIR/dart" ]; then
+    local size_mb=$(du -sm "$CACHE_DIR/dart" | cut -f1)
+    if [ "$size_mb" -gt "$MAX_CACHE_SIZE_MB" ]; then
+      warning "Purging oversized cache (${size_mb}MB > ${MAX_CACHE_SIZE_MB}MB)"
+      rm -rf "$CACHE_DIR/dart"
+    fi
   fi
-
-  mcount "cache.$cache_status"
-  meta_set "cache-status" "$cache_status"
-  meta_time "restore-cache-time" "$restore_cache_start_time"
 }
 
-meta_set "build-step" "restore-cache"
-restore_cache | output "$LOG_FILE"
+restore_cache() {
+  purge_large_cache
+  
+  local cache_status=$(get_cache_status "$CACHE_DIR")
+  meta_set "cache-status" "$cache_status"
+  
+  case "$cache_status" in
+    "valid")
+      header "Restoring cache" | output "$LOG_FILE"
+      restore_default_cache_directories "$BUILD_DIR" "$CACHE_DIR"
+      ;;
+    "new-signature")
+      warning "Cache invalidated (signature changed)"
+      ;;
+    *)
+      warning "No valid cache found"
+      ;;
+  esac
+}
 
+### Dependency Installation
 build_dependencies() {
   header "Installing dependencies" | output "$LOG_FILE"
-
-  # Installing dependencies with `dart pub get` using the function from dart.sh
-  monitor "install-dart-dependencies" dart_pub_get "$BUILD_DIR"
+  
+  monitor "pub-get" dart_pub_get "$BUILD_DIR"
+  
+  # Security audit
+  if dart pub upgrade --dry-run --security-checks | grep -q "vulnerable"; then
+    warning "Some dependencies have known vulnerabilities!"
+    meta_set "dart-vulnerabilities" "true"
+  fi
+  
+  # Verify dependencies
+  if ! dart pub outdated --mode=null-safety; then
+    warning "Some dependencies may not be null-safe"
+  fi
 }
+
+### Build Process
+meta_set "build-step" "restore-cache"
+restore_cache | output "$LOG_FILE"
 
 meta_set "build-step" "install-dependencies"
 build_dependencies | output "$LOG_FILE"
 
-### Cache build
+### Final Cache Storage
 cache_build() {
-  local cache_build_start_time
-  cache_build_start_time=$(nowms)
-
-  clear_cache "$CACHE_DIR"
-  header "Caching build"
+  header "Caching build artifacts" | output "$LOG_FILE"
+  
   save_default_cache_directories "$BUILD_DIR" "$CACHE_DIR"
-
   save_signature "$CACHE_DIR"
-  meta_time "save-cache-time" "$cache_build_start_time"
+  
+  log_cache_stats "$CACHE_DIR" | output "$LOG_FILE"
 }
 
 meta_set "build-step" "save-cache"
 cache_build | output "$LOG_FILE"
 
+### Build Summary
 summarize_build() {
+  header "Build succeeded! 🎯" | output "$LOG_FILE"
+  
+  echo "=== Build Summary ===" | output "$LOG_FILE"
+  echo "Dart Version: $(dart --version 2>&1)" | output "$LOG_FILE"
+  echo "Cache Size: $(du -sh "$CACHE_DIR/dart" 2>/dev/null || echo 'N/A')" | output "$LOG_FILE"
+  echo "Dependencies: $(dart pub list | wc -l) packages" | output "$LOG_FILE"
+  
   mmeasure 'modules.size' "$(measure_size)"
   meta_set "dart-modules-size" "$(measure_size)"
 }
 
 meta_set "build-step" "summarize"
-header "Build succeeded!" | output "$LOG_FILE"
-mcount "compile"
 summarize_build | output "$LOG_FILE"
-meta_set "dart-build-success" "true"
-meta_time "build-time" "$build_start_time"
 
-meta_set "build-step" "finished"
+meta_set "dart-build-success" "true"
 log_meta_data >> "$BUILDPACK_LOG_FILE"

@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 
+# Function to create a key-value store file
 kv_create() {
   local f=$1
   mkdir -p "$(dirname "$f")"
   touch "$f"
 }
 
+# Function to clear the contents of the key-value store file
 kv_clear() {
   local f=$1
   echo "" > "$f"
 }
 
+# Function to set a key-value pair in the store
 kv_set() {
   if [[ $# -eq 3 ]]; then
     local f=$1
@@ -20,6 +23,7 @@ kv_set() {
   fi
 }
 
+# Function to get the value of a key from the store
 kv_get() {
   if [[ $# -eq 2 ]]; then
     local f=$1
@@ -29,7 +33,7 @@ kv_get() {
   fi
 }
 
-# get the value, but wrap it in quotes if it contains a space
+# Function to get the value and wrap it in quotes if it contains spaces
 kv_get_escaped() {
   local value
   value=$(kv_get "$1" "$2")
@@ -40,32 +44,30 @@ kv_get_escaped() {
   fi
 }
 
+# Function to get all the keys from the store
 kv_keys() {
   local f=$1
   local keys=()
 
   if [[ -f $f ]]; then
     # Iterate over each line, splitting on the '=' character
-    #
-    # The || [[ -n "$key" ]] statement addresses an issue with reading the last line
-    # of a file when there is no newline at the end. This will not happen if the file
-    # is created with this module, but can happen if it is written by hand.
-    # See: https://stackoverflow.com/questions/12916352/shell-script-read-missing-last-line
     while IFS="=" read -r key value || [[ -n "$key" ]]; do
-      # if there are any empty lines in the store, skip them
+      # Skip empty lines
       if [[ -n $key ]]; then
         keys+=("$key")
       fi
     done < "$f"
 
+    # Return sorted unique keys
     echo "${keys[@]}" | tr ' ' '\n' | sort -u
   fi
 }
 
+# Function to list all key-value pairs from the store
 kv_list() {
   local f=$1
 
-  kv_keys "$f" | tr ' ' '\n' | while read -r key; do
+  kv_keys "$f" | while read -r key; do
     if [[ -n $key ]]; then
       echo "$key=$(kv_get_escaped "$f" "$key")"
     fi

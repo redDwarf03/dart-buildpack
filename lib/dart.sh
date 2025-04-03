@@ -10,35 +10,60 @@ check_dart_installed() {
 
 # Function to get Dart version
 get_dart_version() {
-  dart --version
+  dart --version | awk '{print $4}' | cut -d'.' -f1-3
 }
 
 # Function to install Dart SDK
 install_dart_sdk() {
-  echo "Installing Dart SDK..."
-  # Commands to download and install Dart SDK based on platform
-  if [[ "$OS" == "darwin" ]]; then
-    # MacOS installation commands
-    curl -OL https://storage.googleapis.com/dart-archive/channels/stable/release/latest/sdk/dartsdk-macos-x64-release.zip
-    unzip dartsdk-macos-x64-release.zip
-    export PATH="$PWD/dart-sdk/bin:$PATH"
-  elif [[ "$OS" == "linux" ]]; then
-    # Linux installation commands
+  local version=${1:-"stable"} 
+  echo "Installing Dart SDK ($version)..."
+  
+  case "$(uname -m)" in
+    x86_64) arch="x64";;
+    arm64|aarch64) arch="arm64";;
+    *) error "Unsupported architecture"; exit 1;;
+  esac
+
+  if [[ "$OS" == "linux" ]]; then
+    sudo sh -c 'wget -qO- https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -'
+    sudo sh -c 'wget -qO- https://storage.googleapis.com/download.dartlang.org/linux/debian/dart_stable.list > /etc/apt/sources.list.d/dart_stable.list'
+    sudo apt-get update
     sudo apt-get install dart
+  else
+    local base_url="https://storage.googleapis.com/dart-archive/channels"
+    curl -OL "${base_url}/${version}/release/latest/sdk/dartsdk-${OS}-${arch}-release.zip"
+    unzip "dartsdk-${OS}-${arch}-release.zip"
+    export PATH="$PWD/dart-sdk/bin:$PATH"
   fi
+  
+  dart --version || error "Installation failed"
 }
 
 # Function to install Dart dependencies (dart clean + dart pub get)
 install_dart_dependencies() {
+  local timeout=300
   echo "Installing Dart dependencies..."
-  dart clean
-  dart pub get
+  (
+    cd "$BUILD_DIR" || exit 1
+    timeout $timeout dart pub get || {
+      error "Dependency installation timed out"
+      exit 1
+    }
+  )
 }
 
 # Function to check if dependencies are up to date
 check_dart_dependencies() {
-  echo "Checking if Dart dependencies are up to date..."
-  dart pub upgrade
+  echo "Checking Dart dependencies..."
+  dart pub outdated || {
+    warning "Some dependencies are outdated"
+    return 1 
+  }
+  
+  # 
+  if dart pub audit; then
+    echo "No dependency vulnerabilities found"
+  fi
 }
 
 # Function to set Dart-related environment variables
@@ -58,8 +83,19 @@ check_dart_sdk_and_dependencies() {
 
 # Function to display helpful info for debugging
 dart_info() {
-  echo "Dart Info:"
-  get_dart_version
-  dart --version
-  echo "DART_HOME: $DART_HOME"
+  echo "=== Dart Environment ==="
+  echo "Version: $(dart --version 2>&1)"
+  echo "Pub Cache: $(dart pub cache list | wc -l) packages"
+  echo "SDK Path: $(which dart)"
+  echo "Flutter Compat: $(dart --version | grep -q 'Flutter' && echo 'Yes' || echo 'No')"
+  echo "Environment:"
+  env | grep -i 'DART\|PUB' | sort
 }
+
+# Function to clean cache
+clean_dart_cache() {
+  echo "Cleaning Dart cache..."
+  dart pub cache clean
+  rm -rf ~/.pub-cache/{git,hosted}/*
+}
+
