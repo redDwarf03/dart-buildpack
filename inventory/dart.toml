@@ -1,0 +1,37 @@
+name = "dart"
+
+[[releases]]
+version = "3.6.2"
+channel = "stable"
+url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.6.2/sdk/dartsdk-{os}-{arch}-release.zip"
+
+[[releases]]
+version = "3.3.1"
+channel = "stable"
+url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.3.1/sdk/dartsdk-{os}-{arch}-release.zip"
+
+[[releases]]
+version = "3.3.0"
+channel = "stable"
+url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.3.0/sdk/dartsdk-{os}-{arch}-release.zip"
+
+[[releases]]
+version = "3.2.6"
+channel = "stable"
+url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.2.6/sdk/dartsdk-{os}-{arch}-release.zip"
+
+[[releases]]
+version = "3.2.5"
+channel = "stable"
+url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.2.5/sdk/dartsdk-{os}-{arch}-release.zip"
+
+[versions]
+# Latest stable version
+"3.6.2" = { url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.6.2/sdk/dartsdk-{os}-{arch}-release.zip", stable = true }
+"3.3.1" = { url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.3.1/sdk/dartsdk-{os}-{arch}-release.zip", stable = true }
+"3.3.0" = { url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.3.0/sdk/dartsdk-{os}-{arch}-release.zip", stable = true }
+"3.2.6" = { url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.2.6/sdk/dartsdk-{os}-{arch}-release.zip", stable = true }
+"3.2.5" = { url = "https://storage.googleapis.com/dart-archive/channels/stable/release/3.2.5/sdk/dartsdk-{os}-{arch}-release.zip", stable = true }
+
+[defaults]
+version = "3.6.2"

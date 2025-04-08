@@ -1,42 +1,29 @@
 #!/usr/bin/env bash
 
-# Fallback method for generating a UUID if no proper method is available
-uuid_fallback() {
-    local N B C='89ab'
+# UUID generation functions for the buildpack
+# This file contains functions for generating unique identifiers
 
-    for (( N=0; N < 16; ++N ))
-    do
-        B=$(( RANDOM%256 ))
-
-        case $N in
-            6)
-                printf '4%x' $(( B%16 ))   # Version 4 UUID
-                ;;
-            8)
-                printf '%c%x' ${C:$RANDOM%${#C}:1} $(( B%16 ))  # Random character in the UUID
-                ;;
-            3 | 5 | 7 | 9)
-                printf '%02x-' $B    # Hyphenate specific positions for UUID format
-                ;;
-            *)
-                printf '%02x' $B    # Standard hexadecimal part
-                ;;
-        esac
-    done
-
-    echo
+# @description Generates a random UUID v4
+# @return {string} A randomly generated UUID v4
+uuid_fallback()
+{
+  # Generate 16 random bytes and convert to hex
+  # Use LC_ALL=C to ensure consistent behavior with tr
+  # Format: 8-4-4-4-12 characters
+  LC_ALL=C tr -dc '0-9a-f' < /dev/urandom | head -c 32 | sed -e 's/\([0-9a-f]\{8\}\)\([0-9a-f]\{4\}\)\([0-9a-f]\{4\}\)\([0-9a-f]\{4\}\)\([0-9a-f]\{12\}\)/\1-\2-\3-\4-\5/'
 }
 
-# Function to generate a UUID, using platform-specific methods if available
+# @description Generates a random UUID v4
+# @return {string} A randomly generated UUID v4
 uuid() {
-  # If /proc/sys/kernel/random/uuid exists (common in Linux environments), use it
-  if [[ -f /proc/sys/kernel/random/uuid ]]; then
-    cat /proc/sys/kernel/random/uuid
-  # On macOS, use the `uuidgen` command if available
-  elif [[ -x "$(command -v uuidgen)" ]]; then
-    uuidgen | tr "[:upper:]" "[:lower:]"  # Convert to lowercase to match UUID format
-  # If no method is found, fallback to a basic, less reliable UUID generation
+  # On Scalingo's stack, there is a uuid command
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen
   else
     uuid_fallback
   fi
 }
+
+# Used for generating unique identifiers for Dart builds and deployments
+# If you have any issues, please report them at:
+# https://github.com/Scalingo/dart-buildpack/issues/new

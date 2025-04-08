@@ -1,115 +1,218 @@
 #!/usr/bin/env bash
 
-# Function to measure the size of the "pubspec.lock" file
+# shellcheck source=lib/vendor/stdlib_v7.sh
+source "$BP_DIR/lib/vendor/stdlib_v7.sh"
+
+# Fonction pour mesurer la taille d'un répertoire
+# @param $1 directory - Répertoire à mesurer
+# @return La taille du répertoire en octets
 measure_size() {
-  local lock_file="pubspec.lock"
-  
-  if [[ -f "$lock_file" ]]; then
-    echo "The size of the pubspec.lock file is:"
-    du -sh "$lock_file" 2>/dev/null || echo 0
-  else
-    echo "The pubspec.lock file does not exist."
-  fi
+  local directory="$1"
+  du -sb "$directory" | cut -f1
 }
 
-# Function to list the project's dependencies
+# Fonction pour lister les dépendances depuis pubspec.lock
+# @param $1 build_dir - Répertoire de build
+# @return Liste des dépendances au format JSON
 list_dependencies() {
   local build_dir="$1"
-  
-  echo "Listing dependencies in $build_dir:"
-  cd "$build_dir" || return
-  dart pub deps
-}
+  local deps="[]"
 
-# Function to run a script if it exists in the pubspec.yaml
-run_if_present() {
-  local build_dir=${1:-}
-  local script_name=${2:-}
-  
-  if [[ -f "$build_dir/pubspec.yaml" ]]; then
-    echo "Checking for scripts in pubspec.yaml for script: $script_name"
-    # Dart does not natively support custom scripts like some other ecosystems, but you can still run defined commands
-    if grep -q "$script_name" "$build_dir/pubspec.yaml"; then
-      echo "The script $script_name is defined. Running..."
-      # Example: Running a Dart script with the dart run command
-      dart run "$script_name"
-    else
-      echo "The script $script_name does not exist in pubspec.yaml."
-    fi
-  else
-    echo "The pubspec.yaml file does not exist in $build_dir."
+  if [ -f "$build_dir/pubspec.lock" ]; then
+    deps=$(dart pub deps --json | jq '.packages')
   fi
+
+  echo "$deps"
 }
 
-# Function to install dependencies for a Dart project
+# Fonction pour exécuter un script Dart
+# @param $1 build_dir - Répertoire de build
+# @param $2 script - Script à exécuter
+# @return 0 si l'exécution réussit, 1 sinon
+run_dart_script() {
+  local build_dir="$1"
+  local script="$2"
+
+  cd "$build_dir" || return 1
+  dart "$script"
+  return $?
+}
+
+# Fonction pour exécuter dart pub get
+# @param $1 build_dir - Répertoire de build
+# @return 0 si l'installation réussit, 1 sinon
+run_pub_get() {
+  local build_dir="$1"
+
+  cd "$build_dir" || return 1
+  dart pub get
+  return $?
+}
+
+# Fonction pour exécuter dart pub upgrade
+# @param $1 build_dir - Répertoire de build
+# @return 0 si la mise à jour réussit, 1 sinon
+run_pub_upgrade() {
+  local build_dir="$1"
+
+  cd "$build_dir" || return 1
+  dart pub upgrade
+  return $?
+}
+
+# Fonction pour exécuter dart pub outdated
+# @param $1 build_dir - Répertoire de build
+# @return Liste des dépendances obsolètes au format JSON
+run_pub_outdated() {
+  local build_dir="$1"
+  local outdated="[]"
+
+  cd "$build_dir" || return 1
+  outdated=$(dart pub outdated --json)
+  echo "$outdated"
+}
+
+# Fonction pour exécuter dart analyze
+# @param $1 build_dir - Répertoire de build
+# @return 0 si l'analyse réussit, 1 sinon
+run_dart_analyze() {
+  local build_dir="$1"
+
+  cd "$build_dir" || return 1
+  dart analyze
+  return $?
+}
+
+# Fonction pour exécuter dart test
+# @param $1 build_dir - Répertoire de build
+# @return 0 si les tests réussissent, 1 sinon
+run_dart_test() {
+  local build_dir="$1"
+
+  cd "$build_dir" || return 1
+  dart test
+  return $?
+}
+
+# Fonction pour exécuter dart compile
+# @param $1 build_dir - Répertoire de build
+# @param $2 target - Cible de compilation
+# @return 0 si la compilation réussit, 1 sinon
+run_dart_compile() {
+  local build_dir="$1"
+  local target="$2"
+
+  cd "$build_dir" || return 1
+  dart compile "$target"
+  return $?
+}
+
+# Fonction pour exécuter build_runner
+# @param $1 build_dir - Répertoire de build
+# @param $2 command - Commande build_runner à exécuter
+# @return 0 si l'exécution réussit, 1 sinon
+run_build_runner() {
+  local build_dir="$1"
+  local command="$2"
+
+  cd "$build_dir" || return 1
+  dart run build_runner "$command"
+  return $?
+}
+
+# Fonction pour vérifier les dépendances
+# @param $1 build_dir - Répertoire de build
+# @return 0 si les dépendances sont valides, 1 sinon
+check_dependencies() {
+  local build_dir="$1"
+  local missing_deps=0
+  local outdated_deps=0
+
+  # Vérifie les dépendances manquantes
+  if ! run_pub_get "$build_dir"; then
+    missing_deps=1
+  fi
+
+  # Vérifie les dépendances obsolètes
+  local outdated
+  outdated=$(run_pub_outdated "$build_dir")
+  if [ "$(echo "$outdated" | jq 'length')" -gt 0 ]; then
+    outdated_deps=1
+  fi
+
+  if [ "$missing_deps" -eq 1 ] || [ "$outdated_deps" -eq 1 ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+# Fonction pour installer les dépendances
+# @param $1 build_dir - Répertoire de build
+# @return 0 si l'installation réussit, 1 sinon
 install_dependencies() {
   local build_dir="$1"
 
-  echo "Installing dependencies for Dart in $build_dir..."
-  cd "$build_dir" || return
-  dart pub get
+  # Installe les dépendances
+  if ! run_pub_get "$build_dir"; then
+    return 1
+  fi
+
+  # Vérifie les dépendances
+  if ! check_dependencies "$build_dir"; then
+    return 1
+  fi
+
+  return 0
 }
 
-# Function to update the dependencies to the latest compatible versions
-update_dependencies() {
-  local build_dir="$1"
-  
-  echo "Updating dependencies in $build_dir..."
-  cd "$build_dir" || return
-  dart pub upgrade
-}
-
-# Function to clean up unused dependencies (Dart does not have a direct pruning command)
+# Fonction pour nettoyer les dépendances
+# @param $1 build_dir - Répertoire de build
+# @return 0 si le nettoyage réussit, 1 sinon
 clean_dependencies() {
   local build_dir="$1"
-  
-  echo "Cleaning dependencies in $build_dir..."
-  cd "$build_dir" || return
-  # Dart doesn't offer a pruning command directly, but we can update dependencies to the latest major versions
-  dart pub upgrade --major-versions
-}
 
-# Function to check for outdated dependencies
-check_outdated_dependencies() {
-  local build_dir="$1"
-  
-  echo "Checking for outdated dependencies in $build_dir..."
-  cd "$build_dir" || return
-  dart pub outdated
-}
-
-# Function to check if a pubspec.yaml file exists
-has_pubspec() {
-  local build_dir="$1"
-  
-  if [[ -f "$build_dir/pubspec.yaml" ]]; then
-    echo "true"
-  else
-    echo "false"
+  # Nettoie les artefacts de build
+  if [ -d "$build_dir/build" ]; then
+    rm -rf "$build_dir/build"
   fi
+
+  # Nettoie le cache pub
+  if [ -d "$build_dir/.dart_tool" ]; then
+    rm -rf "$build_dir/.dart_tool"
+  fi
+
+  return 0
 }
 
-# Example usage of the functions in the script
-build_dir="./"  # Replace with your project directory path
+# Fonction pour restaurer le cache
+# @param $1 build_dir - Répertoire de build
+# @param $2 cache_dir - Répertoire de cache
+# @return 0 si la restauration réussit, 1 sinon
+restore_cache() {
+  local build_dir="$1"
+  local cache_dir="$2"
 
-# Check if pubspec.yaml exists in the project directory
-if [[ "$(has_pubspec "$build_dir")" == "true" ]]; then
-  echo "The project contains a pubspec.yaml file."
-  
-  # Install dependencies
-  install_dependencies "$build_dir"
-  
-  # List dependencies
-  list_dependencies "$build_dir"
-  
-  # Check for outdated dependencies
-  check_outdated_dependencies "$build_dir"
-  
-  # Update dependencies
-  update_dependencies "$build_dir"
-  
-  # Clean dependencies
-  clean_dependencies "$build_dir"
-else
-  echo "The pubspec.yaml file was not found in the $build_dir directory."
-fi
+  if [ -d "$cache_dir/.pub-cache" ]; then
+    mkdir -p "$build_dir/.pub-cache"
+    cp -r "$cache_dir/.pub-cache"/* "$build_dir/.pub-cache/"
+  fi
+
+  return 0
+}
+
+# Fonction pour sauvegarder le cache
+# @param $1 build_dir - Répertoire de build
+# @param $2 cache_dir - Répertoire de cache
+# @return 0 si la sauvegarde réussit, 1 sinon
+save_cache() {
+  local build_dir="$1"
+  local cache_dir="$2"
+
+  if [ -d "$build_dir/.pub-cache" ]; then
+    mkdir -p "$cache_dir/.pub-cache"
+    cp -r "$build_dir/.pub-cache"/* "$cache_dir/.pub-cache/"
+  fi
+
+  return 0
+}

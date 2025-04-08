@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+# Script principal d'exécution des tests
+set -e
+set -o pipefail
+
+# Définition des couleurs pour une meilleure lisibilité
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Répertoire du buildpack
+BP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit; pwd)
+
+# Charger les fonctions utilitaires de test
+source "${BP_DIR}/test/utils/test-utils.sh"
+
+echo -e "${YELLOW}=== Démarrage des tests du buildpack Dart ===${NC}"
+
+# Exécuter les tests unitaires
+echo -e "\n${YELLOW}Exécution des tests unitaires...${NC}"
+for test in "${BP_DIR}"/test/unit/*_test.sh; do
+  if [ -f "$test" ]; then
+    echo -e "\nTest: $(basename "$test")"
+    bash "$test"
+  fi
+done
+
+# Exécuter les tests d'intégration
+echo -e "\n${YELLOW}Exécution des tests d'intégration...${NC}"
+for test in "${BP_DIR}"/test/integration/*_test.sh; do
+  if [ -f "$test" ]; then
+    echo -e "\nTest: $(basename "$test")"
+    bash "$test"
+  fi
+done
+
+# Tests uuid.sh
+source "${BP_DIR}/test/unit/uuid_test.sh"
+
+# Tests detect.sh
+source "${BP_DIR}/test/integration/detect_test.sh"
+
+# Tests server.sh
+source "${BP_DIR}/test/integration/server_test.sh"
+
+echo -e "\n${GREEN}=== Tous les tests sont passés avec succès ===${NC}" 

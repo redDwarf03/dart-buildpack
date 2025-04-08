@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+BUILD_DIR=${1:-}
+BP_DIR=$(cd "$(dirname "${0:-}")"; cd ..; pwd)
+
+# shellcheck source=lib/json.sh
+source "$BP_DIR/lib/json.sh"
+
+read_pubspec_yaml() {
+  local key="$1"
+  read_yaml "$BUILD_DIR/pubspec.yaml" "$key"
+}
+
+is_flutter_project() {
+  grep -q "flutter:" "$BUILD_DIR/pubspec.yaml"
+}
+
+has_custom_test_script() {
+  local test_script
+  test_script=$(read_pubspec_yaml ".scripts.test")
+  [ -n "$test_script" ]
+}
+
+run_custom_test() {
+  local test_script
+  test_script=$(read_pubspec_yaml ".scripts.test")
+  eval "$test_script"
+}
+
+# Export the Dart SDK path
+export PATH="$BUILD_DIR/.scalingo/dart/bin:$PATH"
+
+cd "$BUILD_DIR" || exit 1
+
+# Check if tests directory exists
+if [ ! -d "test" ]; then
+  echo "No tests found in test/ directory"
+  exit 0
+fi
+
+# Run tests based on project type and configuration
+if has_custom_test_script; then
+  echo "Running custom test script..."
+  run_custom_test
+elif is_flutter_project; then
+  echo "Running Flutter tests..."
+  flutter test
+else
+  echo "Running Dart tests..."
+  dart test
+fi

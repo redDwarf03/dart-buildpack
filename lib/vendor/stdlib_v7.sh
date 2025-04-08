@@ -101,6 +101,17 @@ sub_env() {
   )
 }
 
+# Export environment variables from a directory
+# Usage: $ export_env_dir ENV_DIR
+export_env_dir() {
+  local env_dir=${1:-$ENV_DIR}
+  if [ -d "$env_dir" ]; then
+    for e in $(ls $env_dir); do
+      export "$e=$(cat $env_dir/$e)"
+    done
+  fi
+}
+
 # Logging
 # -------
 

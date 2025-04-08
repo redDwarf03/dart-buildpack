@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# bin/report <build-dir> <cache-dir> <env-dir>
+
+### Configure environment
+
+set -o errexit    # always exit on error
+set -o pipefail   # don't ignore exit codes when piping output
+
+BUILD_DIR=${1:-}
+CACHE_DIR=${2:-}
+BP_DIR=$(cd "$(dirname "${0:-}")"; cd ..; pwd)
+
+### Load dependencies
+
+# shellcheck source=lib/vendor/stdlib_v7.sh
+source "$BP_DIR/lib/vendor/stdlib_v7.sh"
+# shellcheck source=lib/output.sh
+source "$BP_DIR/lib/output.sh"
+# shellcheck source=lib/monitor.sh
+source "$BP_DIR/lib/monitor.sh"
+# shellcheck source=lib/environment.sh
+source "$BP_DIR/lib/environment.sh"
+# shellcheck source=lib/failure.sh
+source "$BP_DIR/lib/failure.sh"
+# shellcheck source=lib/binaries.sh
+source "$BP_DIR/lib/binaries.sh"
+# shellcheck source=lib/json.sh
+source "$BP_DIR/lib/json.sh"
+# shellcheck source=lib/cache.sh
+source "$BP_DIR/lib/cache.sh"
+# shellcheck source=lib/dependencies.sh
+source "$BP_DIR/lib/dependencies.sh"
+# shellcheck source=lib/uuid.sh
+source "$BP_DIR/lib/uuid.sh"
+# shellcheck source=lib/kvstore.sh
+source "$BP_DIR/lib/kvstore.sh"
+# shellcheck source=lib/metadata.sh
+source "$BP_DIR/lib/metadata.sh"
+# shellcheck source=lib/features.sh
+source "$BP_DIR/lib/features.sh"
+# shellcheck source=lib/builddata.sh
+source "$BP_DIR/lib/builddata.sh"
+
+export PATH="$BUILD_DIR/.scalingo/dart/bin:$PATH"
+
+meta_init "$CACHE_DIR"
+features_init "dart" "$BUILD_DIR" "$CACHE_DIR" "$BP_DIR/features"
+
+# a place to build up the output YAML structure
+output=$(mktemp -t bin-reportXXXXXX)
+
+# append the key / value pair to $output, but skip if the value is empty
+kv_pair() {
+  local key value
+  key="$1"
+  value="$2"
+  if [[ -n "$value" ]]; then
+    echo "$key: $value" >> $output
+  fi
+}
+
+# use to safely quote strings
+kv_pair_string() {
+  local key value
+  key="$1"
+  value="$2"
+  if [[ -n "$value" ]]; then
+    value=$(echo $value | sed 's/"/\\"/g')
+    echo "$key: \"$value\"" >> $output
+  fi
+}
+
+has_binary_installed() {
+  [[ -x "$(command -v "$1")" ]]
+}
+
+kv_pair_string "stack" "$STACK"
+
+# the version of installed binaries
+has_binary_installed "dart" && kv_pair_string "dart_version" "$(dart --version | cut -d' ' -f4)"
+has_binary_installed "pub" && kv_pair_string "pub_version" "$(pub --version)"
+
+# what versions were requested
+kv_pair_string "dart_version_request" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".environment.sdk")"
+kv_pair_string "flutter_version_request" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".environment.flutter")"
+
+# build scripts
+kv_pair_string "build_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.build")"
+kv_pair_string "test_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.test")"
+kv_pair_string "analyze_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.analyze")"
+kv_pair_string "format_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.format")"
+kv_pair_string "clean_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.clean")"
+kv_pair_string "scalingo_prebuild_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.scalingo-prebuild")"
+kv_pair_string "scalingo_postbuild_script" "$(read_yaml "$BUILD_DIR/pubspec.yaml" ".scripts.scalingo-postbuild")"
+
+# build metrics
+kv_pair "build_script_time" "$(meta_get "build-script-time")"
+kv_pair "build_script_memory" "$(meta_get "build-script-memory")"
+kv_pair "test_script_time" "$(meta_get "test-script-time")"
+kv_pair "test_script_memory" "$(meta_get "test-script-memory")"
+kv_pair "analyze_script_time" "$(meta_get "analyze-script-time")"
+kv_pair "analyze_script_memory" "$(meta_get "analyze-script-memory")"
+kv_pair "scalingo_prebuild_script_time" "$(meta_get "scalingo-prebuild-script-time")"
+kv_pair "scalingo_prebuild_script_memory" "$(meta_get "scalingo-prebuild-script-memory")"
+kv_pair "scalingo_postbuild_script_time" "$(meta_get "scalingo-postbuild-script-time")"
+kv_pair "scalingo_postbuild_script_memory" "$(meta_get "scalingo-postbuild-script-memory")"
+
+# package management info
+kv_pair "lock_file" "$(test -f "$BUILD_DIR/pubspec.lock" && echo "true" || echo "false")"
+kv_pair "uses_flutter" "$(grep -q "flutter:" "$BUILD_DIR/pubspec.yaml" && echo "true" || echo "false")"
+
+# project size metrics
+kv_pair "num_project_files" "$(find "$BUILD_DIR" -name '*.dart' -o -name '*.yaml' | grep -cv .dart_tool | tr -d '[:space:]')"
+kv_pair "packages_size" "$(du -sh "$BUILD_DIR/.pub-cache" 2>/dev/null | cut -f1 || echo "0")"
+
+# build metadata
+kv_pair_string "build_step" "$(meta_get "build-step")"
+kv_pair_string "failure" "$(meta_get "failure")"
+kv_pair_string "cache_status" "$(meta_get "cache-status")"
+kv_pair "build_time" "$(meta_get "build-time")"
+kv_pair "skipped_prune" "$(meta_get "skipped-prune")"
+kv_pair "custom_cache_dirs" "$(meta_get "dart-custom-cache-dirs")"
+
+# execution metrics
+kv_pair "install_dart_sdk_time" "$(meta_get "install-dart-sdk-time")"
+kv_pair "install_dart_sdk_memory" "$(meta_get "install-dart-sdk-memory")"
+kv_pair "pub_get_time" "$(meta_get "pub-get-time")"
+kv_pair "pub_get_memory" "$(meta_get "pub-get-memory")"
+kv_pair "pub_upgrade_time" "$(meta_get "pub-upgrade-time")"
+kv_pair "pub_upgrade_memory" "$(meta_get "pub-upgrade-memory")"
+kv_pair "restore_cache_time" "$(meta_get "restore-cache-time")"
+kv_pair "save_cache_time" "$(meta_get "save-cache-time")"
+kv_pair "dart_compile_time" "$(meta_get "dart-compile-time")"
+kv_pair "dart_compile_memory" "$(meta_get "dart-compile-memory")"
+kv_pair "dart_analyze_time" "$(meta_get "dart-analyze-time")"
+kv_pair "dart_analyze_memory" "$(meta_get "dart-analyze-memory")"
+
+# save which features were turned on or off
+features_list | tr ' ' '\n' | while read -r key; do
+  if [[ -n $key ]]; then
+    kv_pair "feature-$key" "$(features_get "$key")"
+  fi
+done
+
+# emit the metadata on stdout
+cat $output

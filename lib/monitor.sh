@@ -1,6 +1,48 @@
 #!/usr/bin/env bash
 
-# Function to monitor memory usage of a process
+# Monitoring functions for the buildpack
+# This file contains functions for monitoring system resources and command execution
+
+# @description Starts monitoring memory usage
+# @param {string} label - Label to identify this monitoring session
+# @return {void}
+start_memory_monitor() {
+  local label="${1:-default}"
+  echo "Starting memory monitor for: $label"
+  while true; do
+    ps -o rss,command ax | grep -v grep | grep "$label" >> "$BUILD_DIR/.memory_usage"
+    sleep 1
+  done &
+  MONITOR_PID=$!
+}
+
+# @description Stops the memory monitoring process
+# @return {void}
+stop_memory_monitor() {
+  if [ -n "$MONITOR_PID" ]; then
+    kill $MONITOR_PID
+    wait $MONITOR_PID 2>/dev/null
+  fi
+}
+
+# @description Measures the execution time of a command
+# @param {string} command - The command to execute and measure
+# @return {number} The execution time in seconds
+measure_execution_time() {
+  local start_time=$(date +%s)
+  "$@"
+  local end_time=$(date +%s)
+  echo $((end_time - start_time))
+}
+
+# @description Gets the current memory usage of a process
+# @param {number} pid - Process ID to check
+# @return {number} Memory usage in KB
+get_memory_usage() {
+  local pid="$1"
+  ps -o rss= -p "$pid"
+}
+
 monitor_memory_usage() {
   local output_file="$1"
 
@@ -13,16 +55,16 @@ monitor_memory_usage() {
   # save the PID of the running command
   pid=$!
 
-  # if this process is SIGTERM'd, kill the background process
+  # if this build process is SIGTERM'd
   trap 'kill -TERM $pid' TERM
 
-  # Initialize peak memory usage to 0
+  # set the peak memory usage to 0 to start
   peak="0"
 
   while true; do
     sleep .1
 
-    # Check memory usage of the process
+    # check the memory usage
     sample="$(ps -o rss= $pid 2> /dev/null)" || break
 
     if [[ $sample -gt $peak ]]; then
@@ -30,39 +72,35 @@ monitor_memory_usage() {
     fi
   done
 
-  # Convert from KB to MB for easier reading
+  # ps gives us kb, let's convert to mb for convenience
   echo "$((peak / 1024))" > "$output_file"
 
-  # Wait for the background process to finish and capture the exit code
+  # After wait returns we can get the exit code of $command
   wait $pid
 
-  # Wait again in case a TERM signal was sent to ensure proper termination
-  # Reference: http://veithen.github.io/2014/11/16/sigterm-propagation.html
+  # wait a second time in case the trap was executed
+  # http://veithen.github.io/2014/11/16/sigterm-propagation.html
   wait $pid
 
-  # Return the exit code of the command
+  # return the exit code of $command
   return $?
 }
 
-# Function to execute a command and monitor memory usage and execution time
 monitor() {
   local peak_mem_output start
   local command_name=$1
   shift
   local command=( "$@" )
 
-  # Create a temporary file to store peak memory usage
   peak_mem_output=$(mktemp)
   start=$(nowms)
 
-  # Execute the subcommand while monitoring its memory usage
+  # execute the subcommand and save the peak memory usage
   monitor_memory_usage "$peak_mem_output" "${command[@]}"
 
-  # Log the execution time and memory usage
-  mtime "exec.$command_name.time" "$start"
+  mtime "exec.$command_name.time" "${start}"
   mmeasure "exec.$command_name.memory" "$(cat "$peak_mem_output")"
 
-  # Store the execution time and memory usage in metadata
   meta_time "$command_name-time" "$start"
   meta_set "$command_name-memory" "$(cat "$peak_mem_output")"
 }

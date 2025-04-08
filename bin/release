@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
 # bin/release <build-dir>
 
-build_dir=$1
+# shellcheck source=lib/vendor/stdlib_v7.sh
+source "$BP_DIR/lib/vendor/stdlib_v7.sh"
 
-# Always use dart run to start the Dart application
-cat << EOF
+# Read the pubspec.yaml to get the application name
+app_name=$(grep -E "^name:" "$1/pubspec.yaml" | cut -d: -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+# Default web command
+web_command="dart run bin/server.dart"
+
+# Check if there's a custom web command in the pubspec.yaml
+if grep -q "web:" "$1/pubspec.yaml"; then
+  web_command=$(grep -E "^web:" "$1/pubspec.yaml" | cut -d: -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+fi
+
+cat <<EOF
+---
 addons: []
 default_process_types:
-  web: dart run bin/server.dart
+  web: $web_command
 EOF

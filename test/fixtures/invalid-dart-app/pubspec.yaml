@@ -1,0 +1,10 @@
+name: invalid_dart_app
+description: An invalid Dart application for testing
+version: invalid-version
+
+environment:
+  sdk: 'invalid-sdk-version'
+
+dependencies:
+  - this is not valid YAML
+  : missing key 

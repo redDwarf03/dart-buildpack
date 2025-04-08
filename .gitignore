@@ -1,2 +1,44 @@
-.vscode
-test
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Dossiers de build et cache
+build/
+.cache/
+test/cache/
+test/env/
+.export.d/
+.profile.d/
+
+# Fichiers de dépendances et binaires
+lib/vendor/
+*.zip
+*.tar.gz
+*.tgz
+
+# Fichiers de configuration locaux
+.env
+.env.local
+*.local
+
+# Fichiers de logs
+*.log
+logs/
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers temporaires
+tmp/
+temp/
+
+# Fichiers de test temporaires
+test/fixtures/*/build/
+test/fixtures/*/.dart_tool/
+test/fixtures/*/.packages
+test/fixtures/*/pubspec.lock
+test/fixtures/dart-server-app/.scalingo/

@@ -1,85 +1,135 @@
 #!/usr/bin/env bash
 # bin/detect <build-dir>
 
-# Enable tracing if the environment variable BUILDPACK_XTRACE is set
+# Script de détection pour le buildpack Dart
+# Vérifie si l'application est une application Dart ou Flutter
+
+# Charger les dépendances
+BP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit; pwd)
+source "${BP_DIR}/lib/vendor/stdlib_v7.sh"
+source "${BP_DIR}/lib/json.sh"
+source "${BP_DIR}/lib/output.sh"
+
+# Ajouter le chemin vers yq
+export PATH="$BP_DIR/lib/vendor:$PATH"
+
 [ "$BUILDPACK_XTRACE" ] && set -o xtrace
 
-# Function to handle errors and output them in a formatted way
 error() {
   local c="2,999 s/^/ !     /"
-  # send all of our output to stderr
-  exec 1>&2
+	# send all of our output to stderr
+	exec 1>&2
 
-  echo -e "\033[1;31m" # bold; red
-  echo -n " !     ERROR: "
-  # Format output with sed based on system type (mac/bsd or unix/gnu)
+	echo -e "\033[1;31m" # bold; red
+	echo -n " !     ERROR: "
+	# this will be fed from stdin
   case $(uname) in
-    Darwin) sed -l "$c";; # mac/bsd sed: -l buffers on line boundaries
-    *)      sed -u "$c";; # unix/gnu sed: -u unbuffered (arbitrary) chunks of data
-  esac
-  echo -e "\033[0m" # reset style
-  exit 1
+		Darwin) sed -l "$c";; # mac/bsd sed: -l buffers on line boundaries
+		*)      sed -u "$c";; # unix/gnu sed: -u unbuffered (arbitrary) chunks of data
+	esac
+	echo -e "\033[0m" # reset style
+	exit 1
 }
 
-# Check if pubspec.yaml exists in the project directory (indicates Dart project)
-if [ -f "$1/pubspec.yaml" ]; then
-  echo 'Dart'  # It's a Dart project
-  exit 0  # Success
-fi
+# Fonction pour vérifier si c'est une application Flutter
+is_flutter_app() {
+  local build_dir=$1
+  local pubspec_yaml="${build_dir}/pubspec.yaml"
 
-# Check if the project contains a Flutter project (indicated by the presence of the .flutter directory)
-if [ -d "$1/.flutter" ]; then
-  echo 'Flutter'  # It's a Flutter project
-  exit 0  # Success
-fi
+  puts_debug "Checking for Flutter app in ${build_dir}"
+  puts_debug "Looking for pubspec.yaml at ${pubspec_yaml}"
 
-# If pubspec.yaml is listed in .slugignore, show an error message
-if [[ -f "$1/.slugignore" ]] && grep -Fxq "pubspec.yaml" "$1/.slugignore"; then
-  error << EOF
-'pubspec.yaml' listed in '.slugignore' file
+  # Vérifier si le fichier pubspec.yaml existe et est valide
+  if [ ! -f "${pubspec_yaml}" ]; then
+    puts_debug "pubspec.yaml not found"
+    return 1
+  fi
 
-The Dart buildpack is set on this application, but was
-unable to detect a 'pubspec.yaml' file. This is likely because
-the '.slugignore' file is removing it before the build begins.
+  if ! json::is_valid_yaml "${pubspec_yaml}"; then
+    puts_debug "pubspec.yaml is not valid"
+    return 1
+  fi
 
-For more information, refer to the following documentation:
-https://doc.scalingo.com/platform/app/slugignore
-EOF
-# If pubspec.yaml is listed in .gitignore, show an error message
-elif [[ -f "$1/.gitignore" ]] && grep -Fxq "pubspec.yaml" "$1/.gitignore"; then
-  error << EOF
-'pubspec.yaml' listed in '.gitignore' file
+  # Vérifier si flutter est listé dans les dépendances
+  local has_flutter_sdk
+  has_flutter_sdk=$(json::read_pubspec "${pubspec_yaml}" "dependencies.flutter")
+  puts_debug "Flutter SDK value: '${has_flutter_sdk}'"
 
-The Dart buildpack is set on this application, but was
-unable to detect a 'pubspec.yaml' file. This is likely because
-the '.gitignore' file is preventing it from being checked in to
-the git repo.
-EOF
-else
-  # If no Dart or Flutter project is detected, show a general error message
-  error <<- EOF
-Application not supported by Dart buildpack
+  # Vérifier si flutter est configuré à la racine
+  local has_flutter_config
+  has_flutter_config=$(json::read_pubspec "${pubspec_yaml}" "flutter")
+  puts_debug "Flutter config value: '${has_flutter_config}'"
 
-The Dart buildpack is set on this application, but was
-unable to detect a Dart codebase.
+  # Vérifier si c'est une application Flutter
+  if [ -n "${has_flutter_sdk}" ] || [ -n "${has_flutter_config}" ]; then
+    puts_debug "Flutter app detected (has_flutter_sdk='${has_flutter_sdk}', has_flutter_config='${has_flutter_config}')"
+    return 0
+  fi
 
-A Dart app on Scalingo requires a 'pubspec.yaml' at the root of
-the directory structure.
+  puts_debug "Not a Flutter app (has_flutter_sdk='${has_flutter_sdk}', has_flutter_config='${has_flutter_config}')"
+  return 1
+}
 
-If you are trying to deploy a Dart application, ensure that this
-file is present at the top level directory. This directory has the
-following files:
+# Fonction pour vérifier si c'est une application Dart
+is_dart_app() {
+  local build_dir=$1
+  local pubspec_yaml="${build_dir}/pubspec.yaml"
 
-$(ls -1p "$1")
+  puts_debug "Checking for Dart app in ${build_dir}"
+  puts_debug "Looking for pubspec.yaml at ${pubspec_yaml}"
 
-If you are trying to deploy an application written in another
-language, you need to change the list of buildpacks used to deploy
-this application.
+  # Vérifier si le fichier pubspec.yaml existe
+  if [ ! -f "${pubspec_yaml}" ]; then
+    puts_debug "pubspec.yaml not found"
+    return 1
+  fi
 
-For more information, refer to the following documentation:
-https://doc.scalingo.com/platform/deployment/buildpacks/multi
-https://github.com/redDwarf03/dart-buildpack
-EOF
-fi
+  # Vérifier si c'est un fichier YAML valide
+  if ! json::is_valid_yaml "${pubspec_yaml}"; then
+    puts_debug "pubspec.yaml is not valid"
+    return 1
+  fi
 
-exit 1  # Exit with an error if no valid Dart/Flutter project is detected
+  # Vérifier si c'est une application Dart
+  local name
+  name=$(json::read_pubspec "${pubspec_yaml}" ".name")
+  puts_debug "Package name: ${name}"
+
+  if [ -z "${name}" ]; then
+    puts_debug "No package name found"
+    return 1
+  fi
+
+  # Si c'est une application Flutter, on retourne false
+  # car is_flutter_app sera appelé en premier
+  if is_flutter_app "${build_dir}"; then
+    puts_debug "Flutter app detected, not a pure Dart app"
+    return 1
+  fi
+
+  puts_debug "Dart app detected"
+  return 0
+}
+
+# Point d'entrée principal
+main() {
+  local build_dir=$1
+
+  puts_debug "Starting detection in ${build_dir}"
+
+  if is_flutter_app "${build_dir}"; then
+    puts_debug "Detected as Flutter app"
+    echo "Flutter"
+    exit 0
+  elif is_dart_app "${build_dir}"; then
+    puts_debug "Detected as Dart app"
+    echo "Dart"
+    exit 0
+  else
+    puts_debug "Not detected as either Dart or Flutter app"
+    exit 1
+  fi
+}
+
+# Exécuter le script
+main "$@"
